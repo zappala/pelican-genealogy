@@ -20,56 +20,80 @@ class Surname(URLWrapper):
     def __init__(self, name, *args, **kwargs):
         super(Surname, self).__init__(name.strip(), *args, **kwargs)
 
+class Person(URLWrapper):
+    def __init__(self, name, *args, **kwargs):
+        super(Person, self).__init__(name.strip(), *args, **kwargs)
 
-class GenealogyGenerator(ArticlesGenerator):
 
-    def __init__(self, *args, **kwargs):
-        self.surnames = defaultdict(list)
-        self.people = defaultdict(list)
-        super(GenealogyGenerator, self).__init__(*args, **kwargs)
+def generate_context(generator):
+    generator.surnames = defaultdict(list)
+    generator.people = defaultdict(list)
 
-    def generate_context(self):
-        super(GenealogyGenerator,self).generate_context()
-        for article in self.articles:
-            if hasattr(article,'surnames'):
-                surnames = article.surnames.split(',')
-                for surname in surnames:
-                    surname = Surname(surname,self.settings)
-                    self.surnames[surname].append(article)
-            if hasattr(article, 'people'):
-                people = article.people.split(',')
-                for person in people:
-                    self.people[person].append(article)
+    for article in generator.articles:
+        # compile list of articles for each surname
+        if hasattr(article,'surnames'):
+            surnames = article.surnames.split(',')
+            for surname in surnames:
+                surname = Surname(surname,generator.settings)
+                generator.surnames[surname].append(article)
+            article.surnames = surnames
+        # compile list of articles for each person
+        if hasattr(article, 'people'):
+            people = article.people.split(',')
+            for person in people:
+                person = Person(person,generator.settings)
+                generator.people[person].append(article)
+            article.people = people
 
-        # self.surnames = list(self.surnames.items())
-        # self.surnames.sort()
+    generator.surnames = list(generator.surnames.items())
+    generator.surnames.sort()
 
-        self.people = list(self.people.items())
-        self.people.sort()
-        print self.tags,self.surnames
+    generator.people = list(generator.people.items())
+    generator.people.sort()
 
-        self._update_context(('surnames','people'))
-        # self.save_cache()
+    generator._update_context(('surnames','people'))
+    generator.save_cache()
+
+def generate_surnames(generator,write):
+    try:
+        surname_template = generator.get_template('surname')
+    except:
+        return
+
+    for surname, articles in generator.surnames:
+        articles.sort(key=attrgetter('date'), reverse=True)
+        dates = [article for article in generator.dates if article in articles]
+        write(surname.save_as, surname_template, generator.context, surname=surname,
+              articles=articles, dates=dates,
+              paginated={'articles': articles, 'dates': dates},
+              page_name=surname.page_name, all_articles=generator.articles)
+
+def generate_people(generator,write):
+
+    try:
+        person_template = generator.get_template('person')
+    except:
+        return
+
+    for person, articles in generator.people:
+        articles.sort(key=attrgetter('date'), reverse=True)
+        dates = [article for article in generator.dates if article in articles]
+        write(person.save_as, person_template, generator.context, person=person,
+              articles=articles, dates=dates,
+              paginated={'articles': articles, 'dates': dates},
+              page_name=person.page_name, all_articles=generator.articles)
         
-    def generate_output(self, writer):
-        write = partial(writer.write_file,
-                        relative_urls=self.settings['RELATIVE_URLS'])
+def generate_output(generator, writer):
+    write = partial(writer.write_file,
+                    relative_urls=generator.settings['RELATIVE_URLS'])
 
-        # Generate surname pages
-        surname_template = self.get_template('surname')
-        for surname, articles in self.surnames.items():
-            articles.sort(key=attrgetter('date'), reverse=True)
-            dates = [article for article in self.dates if article in articles]
-            write(surname.save_as, surname_template, self.context, surname=surname,
-                  articles=articles, dates=dates,
-                  paginated={'articles': articles, 'dates': dates},
-                  page_name=surname.page_name, all_articles=self.articles)
-        # Generate person pages
-
-
-def get_generators(generators):
-    return GenealogyGenerator
+    # Generate surname pages
+    generate_surnames(generator,write)
+    # Generate person pages
+    generate_people(generator,write)
+    
 
 
 def register():
-    signals.get_generators.connect(get_generators)
+    signals.article_generator_finalized.connect(generate_context)
+    signals.article_writer_finalized.connect(generate_output)
